@@ -50,7 +50,7 @@ connUnitPortSpeedOID=$PORTOID.1.15
 usage()
 {
 	echo "Usage: $0 -H host -C community -T status|sensors"
-	exit 0
+	exit 3
 }
 
 
