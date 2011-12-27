@@ -2,7 +2,7 @@
 Summary:	Nagios plugin to check Check SAN Switch Health
 Name:		nagios-plugin-%{plugin}
 Version:	0.0.3
-Release:	0.2
+Release:	1
 # assume same as Nagios
 License:	GPL v2
 Group:		Networking
