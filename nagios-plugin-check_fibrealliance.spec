@@ -2,12 +2,11 @@
 Summary:	Nagios plugin to check Check SAN Switch Health
 Name:		nagios-plugin-%{plugin}
 Version:	0.0.3
-Release:	0.1
+Release:	0.2
 # assume same as Nagios
 License:	GPL v2
 Group:		Networking
-Source0:	http://exchange.nagios.org/components/com_mtree/attachment.php?link_id=1993&cf_id=24/%{plugin}.sh
-# Source0-md5:	01999269f2b12c78f4682405b3826ab8
+Source0:	%{plugin}.sh
 Source1:	%{plugin}.cfg
 URL:		http://exchange.nagios.org/directory/Plugins/Hardware/Storage-Systems/SAN-and-NAS/Check-SAN-Switch-Health/details
 Requires:	nagios-common
@@ -20,9 +19,9 @@ BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 %define		plugindir	%{_prefix}/lib/nagios/plugins
 
 %description
-This plugin checks sensors (PSU, temperature, fans et al) and overall health of
-SAN switches that understand the Fibre Alliance MIB. There is a long list of
-companies behind that MIB.
+This plugin checks sensors (PSU, temperature, fans et al) and overall
+health of SAN switches that understand the Fibre Alliance MIB. There
+is a long list of companies behind that MIB.
 
 %prep
 %setup -qcT
