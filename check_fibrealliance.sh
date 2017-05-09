@@ -1,5 +1,13 @@
 #!/bin/sh
 
+# Version 0.0.5 2013-07-09
+# Ramón Román Castro <ramonromancastro@gmail.com>
+# Minor changes on event, sensors check
+
+# Version 0.0.4 2013-07-05
+# Ramón Román Castro <ramonromancastro@gmail.com>
+# Add event check
+
 # Version 0.0.3 2010-08-18
 # Verify that the sensors check returns data. If not, return unknown to nagios.
 
@@ -47,10 +55,36 @@ connUnitPortStatusOID=$PORTOID.1.7
 connUnitPortSpeedOID=$PORTOID.1.15
 # port speed in kilobytes per second
 
+EVENTOID=$BASEOID.1.11
+connUnitEventIndexOID=$EVENTOID.1.2
+connUnitREventTimeOID=$EVENTOID.1.4
+connUnitEventSeverityOID=$EVENTOID.1.6
+connUnitEventDescrOID=$EVENTOID.1.9
+# user selected state
+# unknown	(1)
+# emergency	(2)
+# alert		(3)
+# critical	(4)
+# error		(5)
+# warning	(6)
+# notify	(7)
+# info		(8)
+# debug		(9)
+# mark		(10)
+
+COMMUNITY=public
+HOST=127.0.0.1
+TEST=status
+VERBOSE=0
+
+verb(){
+	if [ "$VERBOSE" == "1" ]; then echo "[debug] - $1"; fi
+}
+
 usage()
 {
-	echo "Usage: $0 -H host -C community -T status|sensors"
-	exit 3
+	echo "Usage: $0 -H host -C community -T events|status|sensors (-V)"
+	exit 0
 }
 
 
@@ -61,7 +95,7 @@ get_system()
 
 get_sensor()
 {
-        echo "$SENSOR"|grep "^$2.*$1 = "|head -1|sed -e 's,^.*: ,,'
+        echo "$SENSOR"|grep "^$2.*$1 = "|head -1|sed -e 's,^.*: ,,'|sed 's/^[ \"]*//g'|sed 's/[ \"]*$//g'
 }
 
 get_port()
@@ -73,7 +107,7 @@ if test "$1" = -h; then
 	usage
 fi
 
-while getopts "H:C:T:" o; do
+while getopts "H:C:T:V" o; do
 	case "$o" in
 	H )
 		HOST="$OPTARG"
@@ -84,38 +118,125 @@ while getopts "H:C:T:" o; do
 	T )
 		TEST="$OPTARG"
 		;;
+	V )
+		VERBOSE=1
+		;;
 	* )
 		usage
 		;;
 	esac
 done
 
+TIMEOUT=10
 RESULT=
 STATUS=0	# OK
 
 case "$TEST" in
+
+events )
+	TODAY=`date +%d,%m,%Y`
+	RESULT=OK
+	NCRIT=0
+	NWARN=0
+	NUNKN=0
+	index=0
+	verb "Get SNMP OID $connUnitEventSeverityOID"
+	connUnitEventIndex=($(snmpwalk -v 1 -c $COMMUNITY -t $TIMEOUT -Ovq $HOST $connUnitEventSeverityOID))
+	verb "Get SNMP OID $connUnitREventTimeOID"
+	connUnitEventIndex2=($(snmpwalk -v 1 -c $COMMUNITY -t $TIMEOUT -Ovq $HOST $connUnitREventTimeOID | awk '{print $1}' | sed 's/[^,0-9]//g'))
+	for i in ${connUnitEventIndex2[@]}; do
+		if [ "$TODAY" == "$i" ]; then
+			case "${connUnitEventIndex[$index]}" in
+				1 )
+					verb "Event [$i]: UNKNOWN"
+					NUNKN=$((NUNKN+1))
+					RESULT="UNKNOWN"
+				;;
+				2|3|4|5 )
+					verb "Event [$i]: CRITICAL"
+					NCRIT=$((NCRIT+1))
+					RESULT="CRITICAL"
+				;;
+				6 )
+					verb "Event [$i]: WARNING"
+					NWARN=$((NWARN+1))
+					RESULT="WARNING"
+				;;
+				*)
+					verb "Event [$i]: OK"
+					RESULT="OK"
+				;;
+			esac
+		else
+			verb "Skip event [$i]"
+		fi
+		let "index++"
+	done
+	
+	if [ "$NCRIT" -gt 0 ]; then
+		RESULT="CRITICAL: $NCRIT events found today|critical=$NCRIT warning=$NWARN unknown=$NUNKN"
+		STATUS=2
+	elif [ "$NWARN" -gt 0 ]; then
+		RESULT="WARNING: $NWARN events found today|critical=$NCRIT warning=$NWARN unknown=$NUNKN"
+		STATUS=1
+	else
+		RESULT="OK: No events found today|critical=$NCRIT warning=$NWARN unknown=$NUNKN"
+		STATUS=0
+	fi
+	;;
+
 sensors )
-	SENSOR=`snmpwalk -v 1 -c $COMMUNITY -On $HOST $SENSOROID`
-	# Figure out which sensor indexes we have
-	connUnitSensorIndex=`echo "$SENSOR"|
-	grep -F "$connUnitSensorIndexOID."|
-	sed -e 's,^.*: ,,'`
+        RESULT=
+        NCRIT=0
+        NWARN=0
+	SENSOR=`snmpwalk -v 1 -c $COMMUNITY -t $TIMEOUT -On $HOST $SENSOROID`
+	connUnitSensorIndex=`echo "$SENSOR" | grep -F "$connUnitSensorIndexOID." | sed -e 's,^.*: ,,'`
 	for i in $connUnitSensorIndex; do
 		connUnitSensorName=`get_sensor $i $connUnitSensorNameOID`
 		connUnitSensorStatus=`get_sensor $i $connUnitSensorStatusOID`
 		connUnitSensorMessage=`get_sensor $i $connUnitSensorMessageOID`
-		RESULT="$RESULT$connUnitSensorName = $connUnitSensorMessage
-"
-		if test "$connUnitSensorStatus" != 3; then
-			STATUS=2	# Critical
-		fi
+		case "$connUnitSensorStatus" in
+			1 )
+				RESULT="$RESULT$connUnitSensorName = $connUnitSensorMessage\n"
+			;;
+			2 )
+				NWARN=$((NWARN+1))
+				RESULT="${RESULT}WARNING: $connUnitSensorName = $connUnitSensorMessage\n"
+			;;
+			3 )
+				RESULT="$RESULT$connUnitSensorName = $connUnitSensorMessage\n"
+			;;
+			4 )
+				NWARN=$((NWARN+1))
+				RESULT="${RESULT}WARNING: $connUnitSensorName = $connUnitSensorMessage\n"
+
+			;;
+			5 )
+				NCRIT=$((NCRIT+1))
+				RESULT="${RESULT}CRITICAL: $connUnitSensorName = $connUnitSensorMessage\n"
+			;;
+			*)
+				NWARN=$((NWARN+1))
+				RESULT="${RESULT}WARNING: $connUnitSensorName = $connUnitSensorMessage\n"
+			;;
+		esac
 	done
-	if test -z "$SENSOR"; then
-		STATUS=3	# Unknown
-	fi
-	;;
+        if test -z "$RESULT"; then
+                RESULT="Sensors: UNKNOWN\n$RESULT"
+                STATUS=3
+        elif [ "$NCRIT" -gt 0 ]; then
+                RESULT="Sensors: $NCRIT sensors are in CRITICAL state\n$RESULT"
+                STATUS=2
+        elif [ "$NWARN" -gt 0 ]; then
+                RESULT="Sensors: $NWARN sensors are in WARNING state\n$RESULT"
+                STATUS=1
+        else
+                RESULT="Sensors: OK\n$RESULT"
+                STATUS=0
+        fi
+        ;;
 status )
-	SYSTEM=`snmpwalk -v 1 -c $COMMUNITY -On $HOST $SYSTEMOID`
+	SYSTEM=`snmpwalk -v 1 -c $COMMUNITY -t $TIMEOUT -On $HOST $SYSTEMOID`
 	connUnitStatus=`get_system $connUnitStatusOID`
 	connUnitProduct=`get_system $connUnitProductOID`
 	connUnitSn=`get_system $connUnitSnOID`
@@ -137,12 +258,10 @@ status )
 		;;
 	esac
 	if test ! -z "$connUnitProduct"; then
-		RESULT="$RESULT
-Product: $connUnitProduct"
+		RESULT="$RESULT\nProduct: $connUnitProduct"
 	fi
 	if test ! -z "$connUnitSn"; then
-		RESULT="$RESULT
-Serial number: $connUnitSn"
+		RESULT="$RESULT\nSerial number: $connUnitSn"
 	fi
 	;;
 * )
@@ -150,5 +269,5 @@ Serial number: $connUnitSn"
 	;;
 esac
 
-echo "$RESULT"
+echo -e "$RESULT"
 exit $STATUS
